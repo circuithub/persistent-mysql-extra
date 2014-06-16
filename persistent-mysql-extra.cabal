@@ -1,5 +1,5 @@
 name:              persistent-mysql-extra
-version:           0.0.1
+version:           0.0.2
 synopsis:          MySQL-specific queries for use with persistent
 description:       This package provides additional tunable MySQL queries for
                    persistent. Although esqueleto provides a good interface

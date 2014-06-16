@@ -258,12 +258,14 @@ insertOrUpdateUniqueMany_' priority rs ufs = withPriority priority (entityDB t) 
     replicateQ :: Int -> Text
     replicateQ = T.intersperse ',' . (flip T.replicate $ T.singleton '?')
 
-insertOrUpdateUniqueMany_ :: (PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m, PersistUnique m) =>
+insertOrUpdateUniqueMany_ :: (MonadResourceBase m, PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m, PersistUnique m) =>
                              SqlPriority -> Int -> Bool -> [val] -> [DupUpdate val] -> m ()
-insertOrUpdateUniqueMany_ priority chunk commitChunks rs = error "TODO: Implement chunking in insertOrUpdateUniqueMany_"
-  --insertOrUpdateUniqueMany_' rs . map dupUpdateFieldDef
+insertOrUpdateUniqueMany_ priority chunk commitChunks rs ufs =
+  forM_ (chunksOf chunk rs) $ \rs' -> do
+    insertOrUpdateUniqueMany_' priority rs' (map dupUpdateFieldDef ufs)
+    when commitChunks transactionSave
 
-insertOrUpdateUnique_ :: (PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m, PersistUnique m) =>
+insertOrUpdateUnique_ :: (MonadResourceBase m, PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m, PersistUnique m) =>
                           SqlPriority -> val -> [DupUpdate val] -> m ()
 insertOrUpdateUnique_ priority r = insertOrUpdateUniqueMany_ priority 1 False [r]
 
@@ -281,7 +283,6 @@ insertOrUpdateUniqueMany' priority rs ufs = do
   lift $ insertOrUpdateUniqueMany_' priority rs ufs
   selectKeysBy uniqs
 
--- TODO: Optimize conduits
 insertOrUpdateUniqueMany :: (MonadResource m, MonadResourceBase m, PersistEntity val, PersistUnique m, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m) =>
                             SqlPriority -> Int -> Bool -> [val] -> [DupUpdate val] -> Source m (Key val)
 insertOrUpdateUniqueMany priority chunk commitChunks rs ufs = do
