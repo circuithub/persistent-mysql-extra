@@ -5,7 +5,8 @@
 {-# LANGUAGE ConstraintKinds           #-}
 {-# LANGUAGE OverloadedStrings         #-}
 module Database.Persist.MySQL.Extra
-  ( selectKeysByUnordered
+  ( rawSqlSource
+  , selectKeysByUnordered
   , selectKeysBy
   , insertOrUpdateMany_
   , insertOrUpdate_
@@ -79,6 +80,62 @@ updateSems = unsafePerformIO $ newIORef M.empty
 -- (This could happen during periods of high traffic or in a denial-of-service attack)
 maxWaitingQueries :: Int
 maxWaitingQueries = 20
+
+-- | Execute a raw SQL statement and return its results as a
+--   Source.
+rawSqlSource :: (RawSql a, MonadSqlPersist m, MonadResource m)
+       => Text             -- ^ SQL statement, possibly with placeholders.
+       -> [PersistValue]   -- ^ Values to fill the placeholders.
+       -> Source m a
+rawSqlSource stmt = run
+    where
+      getType :: (x -> Source m a) -> a
+      getType = error "rawSqlSource.getType"
+
+      x = getType run
+
+      process :: (RawSql a) => [PersistValue] -> Either Text a
+      process = rawSqlProcessRow
+
+      withStmt' :: (MonadSqlPersist m, MonadResource m) => [Text] -> [PersistValue] -> Source m [PersistValue]
+      withStmt' colSubsts params = rawQuery sql params
+          where
+            sql = T.concat $ makeSubsts colSubsts $ T.splitOn placeholder stmt
+            placeholder = "??"
+            makeSubsts (s:ss) (t:ts) = t : s : makeSubsts ss ts
+            makeSubsts []     []     = []
+            makeSubsts []     ts     = [T.intercalate placeholder ts]
+            makeSubsts ss     []     = error (concat err)
+                where
+                  err = [ "rawsql: there are still ", show (length ss)
+                        , "'??' placeholder substitutions to be made "
+                        , "but all '??' placeholders have already been "
+                        , "consumed.  Please read 'rawSql's documentation "
+                        , "on how '??' placeholders work."
+                        ]
+
+      -- run :: (RawSql a, MonadSqlPersist m, MonadResource m) => [PersistValue] -> Source m a
+      run params = do
+        conn <- lift $ askSqlConn
+        let (colCount, colSubsts) = rawSqlCols (connEscapeName conn) x
+        withStmt' colSubsts params $= getRow colCount
+
+      getRow :: (RawSql a, MonadSqlPersist m, MonadResource m) => Int -> Conduit [PersistValue] m a
+      getRow colCount = do
+        mrow <- await
+        case mrow of
+          Nothing -> return ()
+          Just row
+              | colCount == length row -> getter row >>= yield
+              | otherwise              -> fail $ concat
+                  [ "rawSql: wrong number of columns, got "
+                  , show (length row), " but expected ", show colCount
+                  , " (", rawSqlColCountReason x, ")." ]
+
+      getter :: (RawSql a, MonadSqlPersist m, MonadResource m) => [PersistValue] -> m a
+      getter row = case process row of
+                    Left err -> fail (T.unpack err)
+                    Right r  -> return r
 
 -- | Select keys for each of the records by matching against the first available unique key
 -- See persistent/Database/Persist/Sql/Orphan/PersistQuery.hs
