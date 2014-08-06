@@ -211,7 +211,7 @@ selectKeysByUnordered uniqs opts = do
 --                         in return $ Key $ PersistList keyvals
 
 selectKeysBy :: (MonadResource m, MonadResourceBase m, PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, MonadLogger m) =>
-                [Unique val] -> Source m (Key val)
+                [Unique val] -> Source m (Maybe (Key val))
 selectKeysBy []     = CL.sourceList []
 selectKeysBy uniqs  = do
   conn <- lift askSqlConn
@@ -224,9 +224,15 @@ selectKeysBy uniqs  = do
   forM_ uniqs $ \uniq -> do
     let sql        = "SELECT " <> cols <> " FROM " <> (esc $ entityDB t) <> wher uniq
         vals       = persistUniqueToValues uniq
-    rawQuery sql vals $= CL.mapM parse
+    r <- lift $ listToMaybe <$> (rawQuery sql vals $= CL.mapM parse $$ CL.consume)
+    yield r
+  --forM_ uniqs $ \uniq -> do
+  --  let sql        = "SELECT " <> cols <> " FROM " <> (esc $ entityDB t) <> wher uniq
+  --      vals       = persistUniqueToValues uniq
+  --  rawQuery sql vals $= CL.mapM parse
   where
-    t = entityDef $ proxyFromUniqs uniqs
+    proxy = proxyFromUniqs uniqs
+    t = entityDef proxy
 
     --parse :: [PersistValue] -> [Key val]
     parse xs = case entityPrimary t of
@@ -237,9 +243,10 @@ selectKeysBy uniqs  = do
                        _ -> liftIO $ throwIO $ PersistMarshalError $ "Unexpected in selectKeysBy False: " <> T.pack (show xs)
                   Just pdef ->
                        let pks = map fst $ primaryFields pdef
-                           keyvals = map snd $ filter (\(a, _) -> let ret=isJust (find (== a) pks) in ret) $ zip (map fieldHaskell $ entityFields t) xs
+                           keyvals = map snd $ filter 
+                                        (\(a, _) -> let ret = isJust (find (== a) pks) in ret) $ 
+                                        zip (map fieldHaskell $ entityFields t) xs
                        in return $ Key $ PersistList keyvals
-
 
 -- | Insert or update values in the database (when a duplicate primary key already exists)
 insertOrUpdateMany_' :: (MonadResourceBase m, PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m) =>
@@ -338,7 +345,7 @@ insertOrUpdateUniqueMany' priority rs []  = do
 insertOrUpdateUniqueMany' priority rs ufs = do
   let uniqs = map (headNote "Could not find any unique keys to use with insertOrUpdate" . persistUniqueKeys) rs
   lift $ insertOrUpdateUniqueMany_' priority rs ufs
-  selectKeysBy uniqs
+  (selectKeysBy uniqs $= CL.map fromJust)
 
 insertOrUpdateUniqueMany :: (MonadResource m, MonadResourceBase m, PersistEntity val, PersistUnique m, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m) =>
                             SqlPriority -> Int -> Bool -> [val] -> [DupUpdate val] -> Source m (Key val)
@@ -455,6 +462,9 @@ proxyFromRecords _ = Proxy
 
 proxyFromEntities :: PersistEntity val => [Entity val] -> Proxy val
 proxyFromEntities _ = Proxy
+
+keyFromProxy :: PersistEntity val => Proxy val -> m (Key val)
+keyFromProxy _ = error "keyFromProxy must not be evaluated"
 
 dupUpdateFieldDef :: PersistEntity val => DupUpdate val -> FieldDef SqlType
 dupUpdateFieldDef (DupUpdateField f) = persistFieldDef f
