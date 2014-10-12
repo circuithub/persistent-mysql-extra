@@ -70,7 +70,6 @@ instance Exception SqlWaitException
 --instance Error SqlWaitException where
 --  strMsg = PersistError . pack
 
-
 -- Use these semaphores to implement low priority updates in mysql with InnoDB tables
 updateSems :: IORef (Map Text (MVar (), IORef Int))
 {-# NOINLINE updateSems #-}
@@ -83,10 +82,13 @@ maxWaitingQueries = 20
 
 -- | Execute a raw SQL statement and return its results as a
 --   Source.
-rawSqlSource :: (RawSql a, MonadSqlPersist m, MonadResource m)
-       => Text             -- ^ SQL statement, possibly with placeholders.
-       -> [PersistValue]   -- ^ Values to fill the placeholders.
-       -> Source m a
+rawSqlSource :: ( RawSql a
+                , MonadSqlPersist m
+                , MonadResource m
+                )
+             => Text             -- ^ SQL statement, possibly with placeholders.
+             -> [PersistValue]   -- ^ Values to fill the placeholders.
+             -> Source m a
 rawSqlSource stmt = run
     where
       getType :: (x -> Source m a) -> a
@@ -139,8 +141,16 @@ rawSqlSource stmt = run
 
 -- | Select keys for each of the records by matching against the first available unique key
 -- See persistent/Database/Persist/Sql/Orphan/PersistQuery.hs
-selectKeysByUnordered :: (MonadResource m, MonadResourceBase m, PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, MonadLogger m) =>
-                         [Unique val] -> [SelectOpt val] -> Source m (Key val)
+selectKeysByUnordered :: ( MonadResource m
+                         , MonadResourceBase m
+                         , PersistEntity val
+                         , PersistEntityBackend val ~ PersistMonadBackend m
+                         , MonadSqlPersist m
+                         , MonadLogger m
+                         )
+                      => [Unique val] 
+                      -> [SelectOpt val]
+                      -> Source m (Key val)
 selectKeysByUnordered []    _    = CL.sourceList []
 selectKeysByUnordered uniqs opts = do
   conn <- lift askSqlConn
@@ -176,7 +186,8 @@ selectKeysByUnordered uniqs opts = do
                            keyvals = map snd $ filter (\(a, _) -> let ret=isJust (find (== a) pks) in ret) $ zip (map fieldHaskell $ entityFields t) xs
                        in return $ Key $ PersistList keyvals
 
---selectKeysBy :: (MonadResourceBase m, PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, MonadLogger m) =>
+--selectKeysBy :: (MonadResourceBase m, PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, MonadLogger m)
+--             =>
 --                [Unique val] -> [SelectOpt val] -> Source m (Key val)
 --selectKeysBy []    _    = CL.sourceList []
 --selectKeysBy uniqs opts = do
@@ -210,8 +221,15 @@ selectKeysByUnordered uniqs opts = do
 --                             keyvals = map snd $ filter (\(a, _) -> let ret=isJust (find (== a) pks) in ret) $ zip (map fieldHaskell $ entityFields t) xs
 --                         in return $ Key $ PersistList keyvals
 
-selectKeysBy :: (MonadResource m, MonadResourceBase m, PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, MonadLogger m) =>
-                [Unique val] -> Source m (Maybe (Key val))
+selectKeysBy :: ( MonadResource m
+                , MonadResourceBase m
+                , PersistEntity val
+                , PersistEntityBackend val ~ PersistMonadBackend m
+                , MonadSqlPersist m
+                , MonadLogger m
+                )
+             => [Unique val]
+             -> Source m (Maybe (Key val))
 selectKeysBy []     = CL.sourceList []
 selectKeysBy uniqs  = do
   conn <- lift askSqlConn
@@ -249,8 +267,16 @@ selectKeysBy uniqs  = do
                        in return $ Key $ PersistList keyvals
 
 -- | Insert or update values in the database (when a duplicate primary key already exists)
-insertOrUpdateMany_' :: (MonadResourceBase m, PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m) =>
-                        SqlPriority -> [Entity val] -> [FieldDef SqlType] -> m ()
+insertOrUpdateMany_' :: ( MonadResourceBase m
+                        , PersistEntity val
+                        , PersistEntityBackend val ~ PersistMonadBackend m
+                        , MonadSqlPersist m
+                        , PersistStore m
+                        )
+                     => SqlPriority        -- ^ Priority of query. Set to 'LowPriority' to use a local mutex (helps with contention accross threads, but not accross processes)
+                     -> [Entity val]
+                     -> [FieldDef SqlType]
+                     -> m ()
 insertOrUpdateMany_' _        [] _ = return ()
 insertOrUpdateMany_' priority es []   = withPriority priority (entityDB . entityDef $ proxyFromEntities es) $ mapM_ (\(Entity key val) -> insertKey key val) es
 insertOrUpdateMany_' priority es ufs  = withPriority priority (entityDB t) $ do
@@ -277,8 +303,18 @@ insertOrUpdateMany_' priority es ufs  = withPriority priority (entityDB t) $ do
     replicateQ :: Int -> Text
     replicateQ = T.intersperse ',' . (flip T.replicate $ T.singleton '?')
 
-insertOrUpdateMany_ :: (MonadResourceBase m, PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m) =>
-                       SqlPriority -> Int -> Bool -> [Entity val] -> [DupUpdate val] -> m ()
+insertOrUpdateMany_ :: ( MonadResourceBase m
+                       , PersistEntity val
+                       , PersistEntityBackend val ~ PersistMonadBackend m
+                       , MonadSqlPersist m
+                       , PersistStore m
+                       ) 
+                    => SqlPriority      -- ^ Priority of query. Set to 'LowPriority' to use a local mutex (helps with contention accross threads, but not accross processes)
+                    -> Int              -- ^ Chunk size
+                    -> Bool             -- ^ Commit each transaction
+                    -> [Entity val]
+                    -> [DupUpdate val]
+                    -> m ()
 insertOrUpdateMany_ priority chunk commitChunks rs ufs = mapM_ insertOrUpdateChunk $ chunksOf chunk rs
   where
     fs = map dupUpdateFieldDef ufs
@@ -289,13 +325,29 @@ insertOrUpdateMany_ priority chunk commitChunks rs ufs = mapM_ insertOrUpdateChu
       insertOrUpdateMany_' priority rs' fs
       when commitChunks transactionSave
 
-insertOrUpdate_ :: (MonadResourceBase m, PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m) =>
-                   Entity val -> [DupUpdate val] -> m ()
+insertOrUpdate_ :: ( MonadResourceBase m
+                   , PersistEntity val
+                   , PersistEntityBackend val ~ PersistMonadBackend m
+                   , MonadSqlPersist m
+                   , PersistStore m
+                   ) 
+                => Entity val
+                -> [DupUpdate val]
+                -> m ()
 insertOrUpdate_ r = insertOrUpdateMany_ NormalPriority 1 False [r]
 
 -- | Insert or update values in the database (when a duplicate already exists)
-insertOrUpdateUniqueMany_' :: (MonadResourceBase m, PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m, PersistUnique m) =>
-                              SqlPriority -> [val] -> [FieldDef SqlType] -> m ()
+insertOrUpdateUniqueMany_' :: ( MonadResourceBase m
+                              , PersistEntity val
+                              , PersistEntityBackend val ~ PersistMonadBackend m
+                              , MonadSqlPersist m
+                              , PersistStore m
+                              , PersistUnique m
+                              ) 
+                           => SqlPriority         -- ^ Priority of query. Set to 'LowPriority' to use a local mutex (helps with contention accross threads, but not accross processes)
+                           -> [val]
+                           -> [FieldDef SqlType]
+                           -> m ()
 insertOrUpdateUniqueMany_' _ [] _   = return ()
 insertOrUpdateUniqueMany_' priority rs []  = withPriority priority (entityDB . entityDef $ proxyFromRecords rs) $ mapM_ insertUnique rs -- TODO: insertUniqueMany
 insertOrUpdateUniqueMany_' priority rs ufs = withPriority priority (entityDB t) $ do
@@ -322,15 +374,35 @@ insertOrUpdateUniqueMany_' priority rs ufs = withPriority priority (entityDB t) 
     replicateQ :: Int -> Text
     replicateQ = T.intersperse ',' . (flip T.replicate $ T.singleton '?')
 
-insertOrUpdateUniqueMany_ :: (MonadResourceBase m, PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m, PersistUnique m) =>
-                             SqlPriority -> Int -> Bool -> [val] -> [DupUpdate val] -> m ()
+insertOrUpdateUniqueMany_ :: ( MonadResourceBase m
+                             , PersistEntity val
+                             , PersistEntityBackend val ~ PersistMonadBackend m
+                             , MonadSqlPersist m
+                             , PersistStore m
+                             , PersistUnique m
+                             )
+                          => SqlPriority      -- ^ Priority of query. Set to 'LowPriority' to use a local mutex (helps with contention accross threads, but not accross processes)
+                          -> Int              -- ^ Chunk size
+                          -> Bool             -- ^ Commit each chunk (transactions cannot be rolled back)
+                          -> [val]            -- ^ Values to insert / update
+                          -> [DupUpdate val]  -- ^ Fields to update if the file exists
+                          -> m ()
 insertOrUpdateUniqueMany_ priority chunk commitChunks rs ufs =
   forM_ (chunksOf chunk rs) $ \rs' -> do
     insertOrUpdateUniqueMany_' priority rs' (map dupUpdateFieldDef ufs)
     when commitChunks transactionSave
 
-insertOrUpdateUnique_ :: (MonadResourceBase m, PersistEntity val, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m, PersistUnique m) =>
-                          SqlPriority -> val -> [DupUpdate val] -> m ()
+insertOrUpdateUnique_ :: ( MonadResourceBase m
+                         , PersistEntity val
+                         , PersistEntityBackend val ~ PersistMonadBackend m
+                         , MonadSqlPersist m
+                         , PersistStore m
+                         , PersistUnique m
+                         )
+                      => SqlPriority      -- ^ Priority of query. Set to 'LowPriority' to use a local mutex (helps with contention accross threads, but not accross processes)
+                      -> val
+                      -> [DupUpdate val]
+                      -> m ()
 insertOrUpdateUnique_ priority r = insertOrUpdateUniqueMany_ priority 1 False [r]
 
 insertOrUpdateUniqueMany' :: (MonadResource m, MonadResourceBase m, PersistEntity val, PersistUnique m, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m) =>
@@ -347,8 +419,20 @@ insertOrUpdateUniqueMany' priority rs ufs = do
   lift $ insertOrUpdateUniqueMany_' priority rs ufs
   (selectKeysBy uniqs $= CL.map fromJust)
 
-insertOrUpdateUniqueMany :: (MonadResource m, MonadResourceBase m, PersistEntity val, PersistUnique m, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m) =>
-                            SqlPriority -> Int -> Bool -> [val] -> [DupUpdate val] -> Source m (Key val)
+insertOrUpdateUniqueMany :: ( MonadResource m
+                            , MonadResourceBase m
+                            , PersistEntity val
+                            , PersistUnique m
+                            , PersistEntityBackend val ~ PersistMonadBackend m
+                            , MonadSqlPersist m
+                            , PersistStore m
+                            )
+                         => SqlPriority 
+                         -> Int              -- ^ Chunk size
+                         -> Bool
+                         -> [val]
+                         -> [DupUpdate val]
+                         -> Source m (Key val)
 insertOrUpdateUniqueMany priority chunk commitChunks rs ufs = do
   mapM_ insertOrUpdateChunk (chunksOf chunk rs)
   where
@@ -359,8 +443,18 @@ insertOrUpdateUniqueMany priority chunk commitChunks rs ufs = do
       when commitChunks transactionSave
 
 -- | Replace or insert many records using uniqueness constraints instead of the entity key
-repsertUniqueMany_ :: (MonadResourceBase m, PersistEntity val, PersistUnique m, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m) =>
-                      SqlPriority -> Int -> Bool -> [val] -> m ()
+repsertUniqueMany_ :: ( MonadResourceBase m
+                      , PersistEntity val
+                      , PersistUnique m
+                      , PersistEntityBackend val ~ PersistMonadBackend m
+                      , MonadSqlPersist m
+                      , PersistStore m
+                      )
+                   => SqlPriority
+                   -> Int              -- ^ Chunk size
+                   -> Bool
+                   -> [val]
+                   -> m ()
 repsertUniqueMany_ _        _     _            [] = return ()
 repsertUniqueMany_ priority chunk commitChunks rs = mapM_ insertOrUpdateChunk $ chunksOf chunk rs
   where
@@ -373,8 +467,19 @@ repsertUniqueMany_ priority chunk commitChunks rs = mapM_ insertOrUpdateChunk $ 
       insertOrUpdateUniqueMany_' priority rs' fs
       when commitChunks transactionSave
 
-repsertUniqueMany :: (MonadResource m, MonadResourceBase m, PersistEntity val, PersistUnique m, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m) =>
-                     SqlPriority -> Int -> Bool -> [val] -> Source m (Key val)
+repsertUniqueMany :: ( MonadResource m
+                     , MonadResourceBase m
+                     , PersistEntity val
+                     , PersistUnique m
+                     , PersistEntityBackend val ~ PersistMonadBackend m
+                     , MonadSqlPersist m
+                     , PersistStore m
+                     ) 
+                  => SqlPriority
+                  -> Int              -- ^ Chunk size
+                  -> Bool
+                  -> [val]
+                  -> Source m (Key val)
 repsertUniqueMany priority chunk commitChunks rs = do
   mapM_ insertOrUpdateChunk $ chunksOf chunk rs
   where
@@ -389,8 +494,15 @@ repsertUniqueMany priority chunk commitChunks rs = do
       when commitChunks transactionSave
 
 -- | Replace or insert a record using uniqueness constraints instead of the entity key
-repsertUnique_ :: (MonadResourceBase m, PersistEntity val, PersistUnique m, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m) =>
-                  val -> m ()
+repsertUnique_ :: ( MonadResourceBase m
+                  , PersistEntity val
+                  , PersistUnique m
+                  , PersistEntityBackend val ~ PersistMonadBackend m
+                  , MonadSqlPersist m
+                  , PersistStore m
+                  ) 
+               => val
+               -> m ()
 repsertUnique_ r = repsertUniqueMany_ NormalPriority 1 False [r]
 
 -- TODO
@@ -399,8 +511,14 @@ repsertUnique_ r = repsertUniqueMany_ NormalPriority 1 False [r]
 --repsertUnique r = repsertUniqueMany [r]
 
 -- | Insert many values into the database in large chunks
-insertMany_' :: (MonadResourceBase m, MonadSqlPersist m, PersistEntity val) =>
-                SqlPriority -> Bool -> [val] -> m ()
+insertMany_' :: ( MonadResourceBase m
+                , MonadSqlPersist m
+                , PersistEntity val
+                ) 
+             => SqlPriority
+             -> Bool
+             -> [val]
+             -> m ()
 insertMany_' _        _            [] = return ()
 insertMany_' priority ignoreErrors rs = withPriority priority (entityDB t) $ do
   conn <- askSqlConn
@@ -425,15 +543,23 @@ insertMany_' priority ignoreErrors rs = withPriority priority (entityDB t) $ do
     replicateQ :: Int -> Text
     replicateQ = T.intersperse ',' . (flip T.replicate $ T.singleton '?')
 
-insertMany_ :: (MonadResourceBase m, MonadSqlPersist m, PersistEntity val) =>
-                SqlPriority -> Bool -> Int -> Bool -> [val] -> m ()
+insertMany_ :: ( MonadResourceBase m
+               , MonadSqlPersist m
+               , PersistEntity val
+               ) 
+            => SqlPriority
+            -> Bool
+            -> Int
+            -> Bool
+            -> [val]
+            -> m ()
 insertMany_ priority ignoreErrors chunk commitChunks rs = do
   mapM_ (\rs' -> insertMany_' priority ignoreErrors rs' >> when commitChunks transactionSave) $ chunksOf chunk rs
 
 -- Helpers
 -- See persistent/Database/Persist/Sql/Orphan/PersistQuery.hs
 orderClause :: PersistEntity val
-            => Bool -- ^ include the table name
+            => Bool             -- ^ include the table name
             -> Connection
             -> SelectOpt val
             -> Text
