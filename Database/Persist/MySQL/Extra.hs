@@ -83,6 +83,7 @@ maxWaitingQueries = 20
 
 -- | Execute a raw SQL statement and return its results as a
 --   Source.
+-- TODO: This may have some bug... seems like some queries only return the first row?
 rawSqlSource :: (RawSql a, MonadSqlPersist m, MonadResource m)
        => Text             -- ^ SQL statement, possibly with placeholders.
        -> [PersistValue]   -- ^ Values to fill the placeholders.
@@ -243,8 +244,8 @@ selectKeysBy uniqs  = do
                        _ -> liftIO $ throwIO $ PersistMarshalError $ "Unexpected in selectKeysBy False: " <> T.pack (show xs)
                   Just pdef ->
                        let pks = map fst $ primaryFields pdef
-                           keyvals = map snd $ filter 
-                                        (\(a, _) -> let ret = isJust (find (== a) pks) in ret) $ 
+                           keyvals = map snd $ filter
+                                        (\(a, _) -> let ret = isJust (find (== a) pks) in ret) $
                                         zip (map fieldHaskell $ entityFields t) xs
                        in return $ Key $ PersistList keyvals
 
