@@ -17,7 +17,7 @@ module Database.Persist.MySQL.Extra
   , repsertUniqueMany_
   , repsertUniqueMany
   , repsertUnique_
-  --, repsertUnique
+  , repsertUnique
   , insertMany_
   , SqlWaitException
   , SqlPriority (..)
@@ -394,10 +394,12 @@ repsertUnique_ :: (MonadResourceBase m, PersistEntity val, PersistUnique m, Pers
                   val -> m ()
 repsertUnique_ r = repsertUniqueMany_ NormalPriority 1 False [r]
 
--- TODO
---repsertUnique  :: (PersistEntity val, PersistUnique m, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m) =>
---                  val -> m (Key val)
---repsertUnique r = repsertUniqueMany [r]
+repsertUnique  :: (MonadResourceBase m, PersistEntity val, PersistUnique m, PersistEntityBackend val ~ PersistMonadBackend m, MonadSqlPersist m, PersistStore m) =>
+                 val -> m (Key val)
+repsertUnique r = do
+  repsertUnique_ r
+  Just (Entity k _) <- getByValue r -- TODO: Speed this up (no need to return the entire entity for repsert)
+  return k
 
 -- | Insert many values into the database in large chunks
 insertMany_' :: (MonadResourceBase m, MonadSqlPersist m, PersistEntity val) =>
@@ -464,8 +466,8 @@ proxyFromRecords _ = Proxy
 proxyFromEntities :: PersistEntity val => [Entity val] -> Proxy val
 proxyFromEntities _ = Proxy
 
-keyFromProxy :: PersistEntity val => Proxy val -> m (Key val)
-keyFromProxy _ = error "keyFromProxy must not be evaluated"
+-- keyFromProxy :: PersistEntity val => Proxy val -> m (Key val)
+-- keyFromProxy _ = error "keyFromProxy must not be evaluated"
 
 dupUpdateFieldDef :: PersistEntity val => DupUpdate val -> FieldDef SqlType
 dupUpdateFieldDef (DupUpdateField f) = persistFieldDef f
