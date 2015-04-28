@@ -83,7 +83,6 @@ maxWaitingQueries = 20
 
 -- | Execute a raw SQL statement and return its results as a
 --   Source.
--- TODO: This may have some bug... seems like some queries only return the first row?
 rawSqlSource :: (RawSql a, MonadSqlPersist m, MonadResource m)
        => Text             -- ^ SQL statement, possibly with placeholders.
        -> [PersistValue]   -- ^ Values to fill the placeholders.
@@ -122,16 +121,14 @@ rawSqlSource stmt = run
         withStmt' colSubsts params $= getRow colCount
 
       getRow :: (RawSql a, MonadSqlPersist m, MonadResource m) => Int -> Conduit [PersistValue] m a
-      getRow colCount = do
-        mrow <- await
-        case mrow of
-          Nothing -> return ()
-          Just row
-              | colCount == length row -> getter row >>= yield
-              | otherwise              -> fail $ concat
-                  [ "rawSql: wrong number of columns, got "
-                  , show (length row), " but expected ", show colCount
-                  , " (", rawSqlColCountReason x, ")." ]
+      getRow colCount = awaitForever $ \row -> do
+        if colCount == length row
+        then getter row >>= yield
+        else fail $ concat
+              [ "rawSql: wrong number of columns, got "
+              , show (length row), " but expected ", show colCount
+              , " (", rawSqlColCountReason x, ")."
+              ]
 
       getter :: (RawSql a, MonadSqlPersist m, MonadResource m) => [PersistValue] -> m a
       getter row = case process row of
