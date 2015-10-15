@@ -4,7 +4,7 @@
 }:
 mkDerivation {
   pname = "persistent-mysql-extra";
-  version = "0.0.6";
+  version = "0.0.8";
   src = ./.;
   buildDepends = [
     base bytestring conduit containers lifted-base monad-control
